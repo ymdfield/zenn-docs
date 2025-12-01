@@ -1,2 +1,2 @@
 #!/bin/sh
-docker run --rm -v $PWD:/work -p 8000:8000 --name zenn tiryoh/zenn new:article
+docker run --rm -v $PWD:/workspace zenn npx zenn new:article
