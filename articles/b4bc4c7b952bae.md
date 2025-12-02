@@ -128,6 +128,10 @@ from $ to $ Console_dict { writeStdout_dict = \s -> M(s) }
 
 そして、実は自由モナド`Freer`は以下で定義できます[^2][^3][^4]。
 
+[^2]: [Capability is about free monads. It's a bird… It's a plane… It's a free monad! 20 March 2019 — by Arnaud Spiwack](https://www.tweag.io/blog/2019-03-20-capability-free-monad/)
+[^3]: [Freer Monads: Too Fast, Too Free February 18, 2019 freer-monads, extensible-effects, performance, technical](https://reasonablypolymorphic.com/blog/too-fast-too-free/index.html)
+[^4]: 複数の可能な定義（エンコーディング）がありますが、それらは全て等価（同型）です: [Initial and final encodings of free monads Posted on October 20, 2021 - Lysxia](https://blog.poisson.chat/posts/2021-10-20-initial-final-free-monad.html)
+
 ```hs
 data Freer f a = Freer (∀m. Monad m => (∀x. f x -> m x) -> m a)
 ```
@@ -148,6 +152,3 @@ data Freer f a = Freer (∀m. Monad m => (∀x. f x -> m x) -> m a)
 
 執筆中です…
 
-[^2]: [Capability is about free monads. It's a bird… It's a plane… It's a free monad! 20 March 2019 — by Arnaud Spiwack](https://www.tweag.io/blog/2019-03-20-capability-free-monad/)
-[^3]: [Freer Monads: Too Fast, Too Free February 18, 2019 freer-monads, extensible-effects, performance, technical](https://reasonablypolymorphic.com/blog/too-fast-too-free/index.html)
-[^4]: 複数の可能な定義（エンコーディング）がありますが、それらは全て等価（同型）です: [Initial and final encodings of free monads Posted on October 20, 2021 - Lysxia](https://blog.poisson.chat/posts/2021-10-20-initial-final-free-monad.html)
