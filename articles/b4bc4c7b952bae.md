@@ -164,7 +164,7 @@ prog' :: Freer C' A
 
 が型としては同型であることを見ました。ここから先は、その同型な二つの表現が、実際の使い方の違いによりどのように性質が分かれるかを見てみます。
 
-## 自由モナドにおける「後からの書き換え」
+## プログラムを後から「フック」する
 
 自由モナドでは、エフェクトの変換関数
 
@@ -186,7 +186,7 @@ rewrite phi (Freer k) = Freer $ \h -> k (h . phi)
 
 です。`phi`で`f`を`g`に写し、その先を`h`で解釈することで、`f`で書かれたプログラムを`g`の言葉に翻訳できるわけです。
 
-標準入出力の GADT `Console'` に対しては、例えば標準出力を標準エラーにリダイレクトする関数を
+標準入出力の GADT `Console'` に対しては、例えば標準出力を標準エラーにリダイレクトするプログラム変換関数を
 
 ```hs
 redirectStderr :: Freer Console' a -> Freer Console' a
@@ -205,125 +205,196 @@ redirectStderr =
 * 特定のプレフィックスを持つメッセージだけ無視する
 * エラー出力の回数を数えるカウンタを差し込む
 
-いずれも`prog'`の本体の定義には触らずとも外側から可能です。Freerではエフェクトの定義をGADT `Console'` としてデータ化しているため、それを後から好きなように変形しやすい、ということです。
+いずれも`prog'`の本体の定義には触らずとも外側から可能です。
 
-さらに、Tagless finalとの違いとして、例えば同じフックを`n`回適用するようなことが関数合成を使って比較的容易に可能です。
-例えば、`!`を出力の末尾に付けるフックを`n`回適用するような処理は次のように書けます:
+Tagless finalでも基本的に同様のことができますが、そのやり方は自由モナドと異なっています。それが性質の違いを生みます。
 
-```hs
-emphasizeN :: Int -> Freer Console' a -> Freer Console' a 
-emphasizeN 0 = id
-emphasizeN n = emphasize . emphasizeN (n-1)
+## キャリアのRank 2多相性について
 
-emphasize :: Freer Console' a -> Freer Console' a
-emphasize =
-    rewrite $ \op -> case op of
-        WriteStdout s -> WriteStdout (s ++ "!")
-        WriteStderr s -> WriteStderr s
-        ReadLineStdin -> ReadLineStdin
-```
-
-`n`は実行時にユーザ入力から決めることができます。`Freer`の内部に隠れている`∀m`の量化のおかげで、解釈を与えるタイミング自体を実行時まで遅延させられるので、この種の「動的な書き換え」が自然に書けます。
-これがTagless finalではどう難しいかは後ほど述べます。
-
-## Tagless finalで同じことをしようとするとどこで行き詰まる？
-
-自由モナドの`rewrite`に対応するものをTagless finalで書きたい、と考えると、理論的には次のような型が対応することになるでしょう。
+自由モナドの方法で書かれたプログラム変換関数
 
 ```hs
-rewriteTF :: ??? -> (∀m. C m => m a) -> (∀m. D m => m a)
+hook' :: Freer f a -> Freer g a
 ```
 
-ここで`C`と`D`はTagless finalで表現したエフェクトの型クラスです。Freer側での`phi :: ∀x. f x -> g x`に対応するものとして、「`C` のエフェクトを `D` のエフェクトに写す何か」を `???` に書きたいのですが、ここで手が止まります。
+があるとき、理論的には、Tagless finalにおいてこれに対応するのは以下のような関数です。
 
-なぜなら`C` や `D` は普通のデータ型ではなく型クラスだからです。`Console'` のようなGADTであれば「コンストラクタごとの対応」をパターンマッチで列挙してやればよかったのに対し、`C`から`D`への対応を書き下す方法は明らかではありません。Tagless finalでは、`C m` や `D m` は暗黙に渡されている辞書であって、それらをまとめて変形する操作を一つのファーストクラスな値として扱うのが難しいのです。
+```
+hook :: (∀m. C m => m a) -> (∀m. C m => m a)
+```
 
-さらに、`rewriteTF` の型は引数に
+しかしながらTagless finalの通常のスタイルでは、プログラム変換（フック）を行う関数をこのような型にすることはありません。なぜでしょうか？
+
+これは推測になってしまいますが、一つ考えられるのはRank 2多相を避けたいという理由です。Rank 2多相とは、関数の引数の型の部分に全称量化子`∀`が出現するような型のことです。
+一般に、これがあると型推論がうまく働かない場合があります。また第一に目に見えて型が複雑になり、多くのプログラマにとって理解の難易度が上がります[^10]。
+
+[^10]: ところで、Rank 2多相の型推論の問題を解決するためには、`newtype`で包む方法が考えられますが、定義を見ると`Freer`型はまさにそのためのものであるという見方もできます。つまり、Tagless finalで書かれた「任意の`m`について成立するプログラム」の型を`newtype`でくるむことで表に出る型をRank 1に落としたものが`Freer`と見なせます。言い換えると、`Freer`は「Tagless finalのRank 2多相をうまく隠蔽するためのパッケージ」としても捉えられるということです。
+
+代わりに、Haskellでは何らかのモナド変換子`HookT`を用いて
 
 ```hs
-∀m. C m => m a
+hook :: HookT m a -> m a
 ```
 
-のように量化子を含んでいるので、Rank 2多相になっています。量化子 `∀m` が外側に露出しているため、これがRank 2多相の形でコードの至るところに出てくると型推論が効きづらくなってくるという実用上の問題も出てきそうです。
-
-このRank 2多相の型推論の問題を解決するためには、`newtype`で包む方法が考えられますが、`Freer`型はまさにそのためのものであるという見方もできます。
-
-```hs
-newtype Freer f a = Freer (∀m. Monad m => (∀x. f x -> m x) -> m a)
-```
-
-つまり、Tagless finalで書かれた「任意の`m`について成立するプログラム」の型を`newtype`でくるむことで表に出る型をRank 1に落としたものが`Freer`と見なせます。言い換えると、`Freer`は「Tagless finalのRank 2多相をうまく隠蔽するためのパッケージ」としても捉えられるということです。
-
-## Tagless finalでの代わりの方法
-
-では、Tagless finalでは自由モナドの`rewrite`のようなことをできないかというとそうではなく、代わりに「専用のキャリアを用意する」方法が典型的に取られます。
-
-先ほどの標準エラーへのリダイレクトであれば、例えば次のようなモナド変換子を導入できます。
+のような型を持たせることが多いです。例えば先程の`redirectStderr`の例では
 
 ```hs
 newtype RedirectStderrT m a = RedirectStderrT { runRedirectStderrT :: m a }
+  deriving (Functor, Applicative, Monad)
 
 instance Console m => Console (RedirectStderrT m) where
     writeStdout s = RedirectStderrT $ writeStderr s
     writeStderr s = RedirectStderrT $ writeStderr s
     readLineStdin = RedirectStderrT readLineStdin
+
+redirectStderr :: RedirectStderrT m a -> m a
+redirectStderr = runRedirectStderrT
 ```
 
-`prog :: ∀m. Console m => m A` に対して`runRedirectStderrT`を適用することでモナド変換子を一段積み、標準出力が標準エラーに流れるようにできます。
+のようにできます。
+あるいはScalaでは、`using`を使ってエフェクトハンドラの辞書を書き換える方法が典型的に取られるかもしれません:
 
-この方法でも、プログラム本体 `prog` は変更せずに意味だけを書き換えられています。ただし、ここでの違いは「どのキャリアを使うか」をコンパイル時に決めてしまっている点にあります。`RedirectStderrT (LoggingT IO)` のように複数のモナド変換子を積み上げることはできますが、その積み方は型として静的に固定されます。
+```scala
+def redirectStderr[F[_]](original: Console[F]): Console[F] =
+    new Console[F] {
+        def writeStdout(s: String): F[Unit] = original.writeStderr(s)
+        def writeStderr(s: String): F[Unit] = original.writeStderr(s)
+        def readLineStdin: F[String]        = original.readLineStdin
+    }
 
-この制約は、先ほどの「適用回数`n`を実行時に決めるフック」において明らかになります。自由モナドの場合は
+// redirectStderr で書き換えた辞書を使って prog を変換（解釈変更）する
+def redirectStderr[F[_], A](prog: Console[F] ?=> F[A])(using c: Console[F]): F[A] =
+    prog(using redirectStderr(c))
+```
+
+これは型をHaskellに訳すなら、`Console`の辞書型`Console_dict`を使って
+
+```
+redirectStderr :: (Console_dict m -> m a) -> (Console_dict m -> m a)
+```
+
+のように表せます。Haskellでは型クラスの辞書を操作する言語機能に乏しいので、言語ごとでこのようなスタイルの違いが生まれるわけです。
+
+いずれにせよ、Tagless finalでは実際のところ共通して以下のスタイルが取られるといえそうです。
+
+- `m`を細かく量化せず、インターフェース全体で共通のものに揃える
+- すべての`m`はコンパイル時に決定 (instantiate) される
+
+一方で自由モナドはこの逆です。`m`が具体的にどのようなモナドの型になるかは未定であり、実行時になるまで決定を遅らせることができます。
+
+ほとんどのケースにおいて、このスタイルの違いが露呈することはありません。特にScalaでは`using`を使って辞書のオブジェクトを操作できるので、ほとんどのケースで動的なエフェクト解釈変更に対応できるでしょう。
+
+しかしながら、このスタイルの違いが、ある特定の状況において性質を分けることになります。
+
+## Tagless finalスタイルで書くことが難しい例
+
+Tagless finalスタイルの「`m`を静的に決定する」というやり方では、`m`を動的にしなければならない状況において困ったことになります。
+
+そのような例として、唐突ですが次のようなものを考えてみましょう:
+
+- `writeStderr`が呼び出された回数を特定のルール `rule :: String -> Bool` でカウントし、スコープの最後に、指定したパスのファイルにその回数を書き込むようなフックがしたい
+- このフックを、**実行時にユーザから入力される**ファイルパス及びルールのリスト`pathAndRules :: [(FilePath, String -> Bool)]`を使って、すべてのパスに書き込むようにしたい
+
+なお、ここでは話を簡単にするためファイルへの出力は代わりに標準出力へのログの形にすることにします。
+
+### 自由モナドでの実装
+
+まず、自由モナドの方法ではこれは素直に実装できます。
 
 ```hs
-emphasizeN :: Int -> Freer Console' a -> Freer Console' a
-emphasizeN n = ...
+countStderr :: FilePath -> (String -> Bool) -> Freer Console' a -> Freer Console' a
+countStderr path rule (Freer k) = Freer $ \handle -> do
+
+    -- エラーを StateT Int を使ってカウントする処理を追加する
+    let countHandle :: Monad m => Console' x -> StateT Int m x
+        countHandle op = case op of
+            WriteStdout s -> lift $ handle $ WriteStdout s
+            WriteStderr s -> do
+                when (rule s) $ modify (+1)
+                lift $ handle $ WriteStderr s
+            ReadLineStdin -> lift $ handle ReadLineStdin
+
+    -- k を StateT Int m 上で解釈する
+    (result, n) <- runStateT (k countHandle) 0
+
+    -- 最後にカウントを出力する
+    handle $ WriteStdout $ path ++ ": " ++ show count ++ " errors"
+
+    pure result
 ```
 
-のように、実行時に渡された`n`に応じてフックの適用回数を変えることができました。一方、Tagless finalでは
+このフックをリスト全部について掛けるためには、単に`foldr`などを使ってフックを関数合成すればよいです。
 
 ```hs
-newtype EmphasizeT m a = EmphasizeT { runEmphasizeT :: m a }
-
-instance Console m => Console (EmphasizeT m) where
-    writeStdout s = EmphasizeT $ writeStdout (s ++ "!")
-    writeStderr s = EmphasizeT $ writeStderr s
-    readLineStdin = EmphasizeT readLineStdin
+multiCountStderr :: [(FilePath, String -> Bool)] -> Freer Console' a -> Freer Console' a
+multiCountStderr pathAndRules prog =
+    foldr (uncurry countStderr) prog pathAndRules
 ```
 
-のような変換子で表されるフックが用意されていたとき、それを動的な回数`n`だけ繰り返すにはどうすればよいでしょうか？
-これをやろうとすると、型としては
+### Tagless finalでの実装
+
+次に、同じフックをTagless finalで書いてみます。
+
+`writeStderr`の回数を数えるためには状態が必要なので、`StateT`を使ったモナド変換子を定義することが必要になります。
 
 ```hs
-EmphasizeT (EmphasizeT ( ... (EmphasizeT m) ... ))
+newtype CountStderrT m a =
+    CountStderrT { runCountStderrT :: ReaderT (String -> Bool) (StateT Int m) a }
+  deriving (Functor, Applicative, Monad)
+
+instance Console m => Console (CountStderrT m) where
+    writeStdout s =
+        CountStderrT $ lift $ lift $ writeStdout s
+
+    writeStderr s =
+        CountStderrT $ do
+            rule <- ask
+            when (rule s) $ modify (+1)
+            lift $ lift $ writeStderr s
+
+    readLineStdin =
+        CountStderrT $ lift $ lift $ readLineStdin
+
+countStderrT :: Console m => FilePath -> (String -> Bool) -> CountStderrT m a -> m a
+countStderrT path rule m = do
+    (result, count) <- runStateT (runReaderT (runCountStderrT m) rule) 0
+    writeStdout $ path ++ ": " ++ show count ++ " errors"
+    pure result
 ```
 
-という形で`n`回繰り返す必要が出てきます。ところが、`n`は実行時に決まる値なので、その回数分だけ`EmphasizeT`を積むというのは静的に型が付かないことを意味します。
+まず、このフックを一回掛ける用途では、`countStderrT`をあるパスについて一回適用すればよく、問題ありません。
+問題が顕在化するのは、パスのリストを実行時に受け取り、その長さに応じてフックを何回も重ねたいとなったときです。
 
-もちろん、`ReaderT Int`を使うなどすることで動的な回数`!`を出力させるようなフックは問題なく書けますが、あくまでそのような変換子を自分で実装する必要があります。
-既に用意されている一般のフック処理について、それを`n`回適用する方法はTagless finalでは明らかではありません。
+```hs
+-- やりたいことのイメージ
+multiCountStderrT :: Console m => [FilePath] -> ??? -> m a
+multiCountStderrT paths prog = ???
+```
 
-つまり、Tagless finalでは型クラスを使う都合上、必然的に
+`pathAndRules = [("a.log", ...), ("b.log", ...), ("c.log", ...)]`のときには、「`a.log`用のカウンタフック、`b.log`用のカウンタフック、`c.log`用のカウンタフック」を全て差し込みたい、という状況です。
+自由モナドの方では`multiCountStderr`を定義できましたが、Tagless finalではリストの長さ分の個数だけ`CountStderrT`が積まれることになります。
 
-* `m`はコンパイル時に「どのキャリアを使うか」が決まる静的な型であり
-* その上に積む変換子の構造も静的に決まっている
+もしコンパイル時に決まる長さであれば、例えば2回であれば型は`CountStderrT (CountStderrT m)`、3回であれば`CountStderrT (CountStderrT (CountStderrT m))`のようになるでしょう。
+しかし実行時に長さが与えられる一般のリストについて考えようとすると、長さ`n`に応じて
 
-という設計に誘導されるため、**実行時に決まる条件に応じてエフェクトの解釈そのものを差し替えるようなことは自由モナドほど自由にはやりづらい**という違いが出てきます。
+`CountStderrT (CountStderrT ( ... (CountStderrT m) ... ))`
 
-## 両者のスタイルの違いとトレードオフ
+のような型が必要になりますが、`n`は実行時にしかわからないので、静的に型が付かなくなってしまうのです。
 
-まとめると、次のような違いが見えます。
+このようなことをやりたい場合、モナド変換子自体に最初から複数回フックを行うための機能を付ける（つまり、StateTの状態としてIntのリストを持つようにする）といった、
+場合に応じたアドホックな対処が必要になってしまいます。
 
-* Freerでは、エフェクトをGADTとして表現することで第一級データとして操作しやすくし、さらに
-  `Freer f a = Freer (∀m. Monad m => (∀x. f x -> m x) -> m a)`
-  の形で`∀m`の量化を`newtype`の内側に閉じ込めているため、解釈を与えるタイミングを実行時まで遅延させやすい。
-  その結果として、`rewrite`のような後からのプログラム書き換え、実行時の値に依存する動的なフック挿入が書きやすい。
+つまり、既に用意された何らかのフック（プログラム変換）関数があるとき、それを動的な回数だけ掛ける一般的な方法というものがTagless finalのスタイルではどうやら難しいようです。
 
-* Tagless finalでは`m`をエフェクト付き計算のキャリアとしてあらかじめ静的に決めてしまうスタイルに誘導される。
-    その代わり、コンパイラは具体的なキャリア型を見ながら最適化がしやすく、データ構造も静的に決まるため、動的ディスパッチのオーバーヘッドがなく高速に動作する傾向にある。
+ちなみにScalaの場合、`StateT`を使わずにオブジェクトの可変性を利用してカウントするという方法も取れますが、その場合関数は純粋ではなくなり、前半の理論的な等価性についての議論の射程からは外れることになります。
 
-**型のレベルでは両者は同型ですが、「どちら側で何をやると楽か」という実用上の視点では結構違いがあると言えそうです。**
-`Console'`のようにGADTとしてエフェクトをデータ化しておくと、後からの書き換えや変換がやりやすいので`rewrite`的なスタイルが発達し、Tagless finalのように型クラスでエフェクトを捉えると、専用キャリアを設計してコンパイル時に決め打つスタイルが発達する、という形で設計が分かれていくのだと理解することができます。
+## まとめ
+
+Tagless finalではRank 2多相性の露出を回避したいという都合からか、`m`はコンパイル時にどのキャリアを使うかが決まる静的な型とするという設計のスタイルに行き着くようです。
+これにより、**強い動的性が要求される特定の状況において、プログラム変換を自由モナドほど自由にはやりづらい場合がある**という違いが出てきます。
+その代わりコンパイラはデータ構造が静的に決まる具体的なキャリア型を見ることができるので最適化がしやすく、また辞書を操作しない場合は動的ディスパッチのオーバーヘッドがなく高速に動作する傾向にあります。
+
+**型のレベルでは両者は同型ですが、「どちら側で何をやると楽か」という実用上の視点では複雑なケースでは微妙な違いがあると言えそうです。**
 
 いずれにせよ、後半で述べた性質の違いはかなり微妙なものだと思います。
-原理的に機能に違いがあるわけではなく、あくまで実際にプログラミングで使おうとしたときの簡単さの違いであって、これは言語機能のサポートがどの程度あるかといった外部的・環境的な側面が大きいと言えるでしょう。
+原理的に機能に違いがあるわけではなく、あくまで実際にプログラミングで使おうとしたときの簡単さの違いであって、特にRank 2多相について言語機能のサポートがどの程度あるか（どの程度型推論がいい感じに働くか）といった外部的・環境的な側面が大きいと言えるでしょう。
