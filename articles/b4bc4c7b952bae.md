@@ -362,13 +362,13 @@ countStderrT path rule m = do
     pure result
 ```
 
-まず、このフックを一回掛ける用途では、`countStderrT`をあるパスについて一回適用すればよく、問題ありません。
-問題が顕在化するのは、パスのリストを実行時に受け取り、その長さに応じてフックを何回も重ねたいとなったときです。
+まず、このフックを一回掛ける用途では、`countStderrT`をあるパス&ルールについて一回適用すればよく、問題ありません。
+問題が顕在化するのは、パス&ルールのリストを実行時に受け取り、その長さに応じてフックを何回も重ねたいとなったときです。
 
 ```hs
 -- やりたいことのイメージ
-multiCountStderrT :: Console m => [FilePath] -> ??? -> m a
-multiCountStderrT paths prog = ???
+multiCountStderrT :: Console m => [(FilePath, String -> Bool)] -> ??? -> m a
+multiCountStderrT pathAndRules prog = ???
 ```
 
 `pathAndRules = [("a.log", ...), ("b.log", ...), ("c.log", ...)]`のときには、「`a.log`用のカウンタフック、`b.log`用のカウンタフック、`c.log`用のカウンタフック」を全て差し込みたい、という状況です。
