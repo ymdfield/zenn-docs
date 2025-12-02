@@ -1,5 +1,5 @@
 ---
-title: "Tagless finalと自由モナドの関係"
+title: "Tagless finalと自由モナド (Freer) の関係"
 emoji: "📜"
 type: "tech" # tech: 技術記事 / idea: アイデア
 topics:
