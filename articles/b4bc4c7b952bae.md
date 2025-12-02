@@ -255,16 +255,16 @@ redirectStderr = runRedirectStderrT
 あるいはScalaでは、`using`を使ってエフェクトハンドラの辞書を書き換える方法が典型的に取られるかもしれません:
 
 ```scala
-def redirectStderr[F[_]](original: Console[F]): Console[F] =
+def redirectStderrDict[F[_]](original: Console[F]): Console[F] =
     new Console[F] {
         def writeStdout(s: String): F[Unit] = original.writeStderr(s)
         def writeStderr(s: String): F[Unit] = original.writeStderr(s)
         def readLineStdin: F[String]        = original.readLineStdin
     }
 
-// redirectStderr で書き換えた辞書を使って prog を変換（解釈変更）する
+// redirectStderrDict で書き換えた辞書を使って prog を変換（解釈変更）する
 def redirectStderr[F[_], A](prog: Console[F] ?=> F[A])(using c: Console[F]): F[A] =
-    prog(using redirectStderr(c))
+    prog(using redirectStderrDict(c))
 ```
 
 これは型をHaskellに訳すなら、`Console`の辞書型`Console_dict`を使って
