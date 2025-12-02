@@ -270,7 +270,7 @@ def redirectStderr[F[_], A](prog: Console[F] ?=> F[A])(using c: Console[F]): F[A
 これは型をHaskellに訳すなら、`Console`の辞書型`Console_dict`を使って
 
 ```
-redirectStderr :: (Console_dict m -> m a) -> (Console_dict m -> m a)
+redirectStderr :: (Monad m => Console_dict m -> m a) -> (Monad m => Console_dict m -> m a)
 ```
 
 のように表せます。Haskellでは型クラスの辞書を操作する言語機能に乏しいので、言語ごとでこのようなスタイルの違いが生まれるわけです。
