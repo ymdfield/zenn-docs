@@ -11,7 +11,7 @@ published: true
 
 # はじめに
 
-本記事は、エフェクトの観点から、Tagless finalと自由モナドの理論上の厳密な等価性と、文化的・スタイル上の微妙な性質の違いについて示すものです。
+本記事は、エフェクトの観点から、Tagless finalと自由モナドの理論上の厳密な等価性と、実際のところの微妙な性質の違いについて示すものです。理解のためには、エフェクトシステムの知識をある程度前提としています。
 なおコードにはHaskellを使用します。`forall`は代わりに`∀`と表記します。読者は適宜Scalaなどの他言語に読み替えてください（LLMを使用するとよいかもしれません）。
 ここでは、Tagless finalで扱うエフェクトの範囲は一階のもの[^1]に限り、またTagless finalを表現する型クラスのスーパークラスはMonadであることを前提とします（Monadicなエフェクト）。
 
@@ -150,5 +150,177 @@ data Freer f a = Freer (∀m. Monad m => (∀x. f x -> m x) -> m a)
 
 # 微妙な性質の違い
 
-執筆中です…
+前節までで、Tagless finalのプログラム
 
+```hs
+prog  :: ∀m. C m => m A
+```
+
+と、対応する自由モナド版のプログラム
+
+```hs
+prog' :: Freer C' A
+```
+
+が型としては同型であることを見ました。ここから先は、その同型な二つの表現が、実際の使い方の違いによりどのように性質が分かれるかを見てみます。
+
+## 自由モナドにおける「後からの書き換え」
+
+自由モナドでは、エフェクトの変換関数
+
+```hs
+phi :: ∀x. f x -> g x
+```
+
+を使って、プログラム内のエフェクトを一括で差し替えるプログラム変換関数
+
+```hs
+rewrite :: (∀x. f x -> g x) -> Freer f a -> Freer g a
+rewrite phi (Freer k) = Freer $ \h -> k (h . phi)
+```
+
+を定義できます。
+
+`k` は「`f` エフェクトを解釈する関数（エフェクトハンドラ）を渡すとプログラムを実行してくれる関数」で、`h` は「`g` エフェクトのハンドラ」です。`phi` で `f` を `g` に写し、その先を `h` で解釈することで、`f` で書かれたプログラムを `g` の言葉に翻訳できるわけです。
+
+標準入出力の GADT `Console'` に対しては、例えば標準出力を標準エラーにリダイレクトする関数を
+
+```hs
+redirectStderr :: Freer Console' a -> Freer Console' a
+redirectStderr =
+    rewrite $ \op -> case op of
+        WriteStdout s -> WriteStderr s
+        WriteStderr s -> WriteStderr s
+        ReadLineStdin -> ReadLineStdin
+```
+
+のように書けます。ここで重要なのは、`redirectStderr` は `prog' :: Freer Console' A` というプログラム本体にいっさい手を入れずに、その解釈だけを「後から」書き換えている点です。
+
+他にも、自由モナドの方法では、例えば次のようなプログラム変換も比較的容易に行えます。
+
+* 標準出力をそのまま出すと同時にログファイルにも書き出す
+* 特定のプレフィックスを持つメッセージだけ無視する
+* エラー出力の回数を数えるカウンタを差し込む
+
+いずれも`prog'`の本体の定義には触らずとも外側から可能です。Freerではエフェクトの定義をGADT `Console'` としてデータ化しているため、それを後から好きなように変形しやすい、ということです。
+
+さらに、Tagless finalとの違いとして、例えば同じフックを`n`回適用するようなことが関数合成を使って比較的容易に可能です。
+例えば、`!`を出力の末尾に付けるフックを`n`回適用するような処理は次のように書けます:
+
+```hs
+emphasizeN :: Int -> Freer Console' a -> Freer Console' a 
+emphasizeN 0 = id
+emphasizeN n = emphasize . emphasizeN (n-1)
+
+emphasize :: Freer Console' a -> Freer Console' a
+emphasize =
+    rewrite $ \op -> case op of
+        WriteStdout s -> WriteStdout (s ++ "!")
+        WriteStderr s -> WriteStderr s
+        ReadLineStdin -> ReadLineStdin
+```
+
+`n`は実行時にユーザ入力から決めることができます。`Freer`の内部に隠れている`∀m`の量化のおかげで、解釈を与えるタイミング自体を実行時まで遅延させられるので、この種の「動的な書き換え」が自然に書けます。
+これがTagless finalではどう難しいかは後ほど述べます。
+
+## Tagless finalで同じことをしようとするとどこで行き詰まる？
+
+自由モナドの`rewrite`に対応するものをTagless finalで書きたい、と考えると、理論的には次のような型が対応することになるでしょう。
+
+```hs
+rewriteTF :: ??? -> (∀m. C m => m a) -> (∀m. D m => m a)
+```
+
+ここで`C`と`D`はTagless finalで表現したエフェクトの型クラスです。Freer側での`phi :: ∀x. f x -> g x`に対応するものとして、「`C` のエフェクトを `D` のエフェクトに写す何か」を `???` に書きたいのですが、ここで手が止まります。
+
+なぜなら`C` や `D` は普通のデータ型ではなく型クラスだからです。`Console'` のようなGADTであれば「コンストラクタごとの対応」をパターンマッチで列挙してやればよかったのに対し、`C`から`D`への対応を書き下す方法は明らかではありません。Tagless finalでは、`C m` や `D m` は「暗黙に渡されている辞書」であって、それらをまとめて変形する操作を一つのファーストクラスな値として扱うのが難しいのです。
+
+さらに、`rewriteTF` の型は引数に
+
+```hs
+∀m. C m => m a
+```
+
+のように量化子を含んでいるので、Rank 2多相になっています。量化子 `∀m` が外側に露出しているため、これがRank 2多相の形でコードの至るところに出てくると型推論が効きづらくなってくるという実用上の問題も出てきそうです。
+
+このRank 2多相の型推論の問題を解決するためには、`newtype`で包む方法が考えられますが、`Freer`型はそのためのものであるという見方もできます。
+
+```hs
+newtype Freer f a = Freer (∀m. Monad m => (∀x. f x -> m x) -> m a)
+```
+
+つまり、Tagless finalで書かれた「任意の`m`について成立するプログラム」の型を`newtype`でくるむことで表に出る型をRank 1に落としたものが`Freer`と見なせます。言い換えると、`Freer`は「Tagless finalのRank 2多相をうまく隠蔽するためのパッケージ」としても捉えられるということです。
+
+## Tagless finalでの代わりの方法
+
+では、Tagless finalでは自由モナドの`rewrite`のようなことをできないかと言うとそうではなく、代わりに「専用のキャリアを用意する」方法が典型的に取られます。
+
+先ほどの標準エラーへのリダイレクトであれば、例えば次のようなモナド変換子を導入できます。
+
+```hs
+newtype RedirectStderrT m a = RedirectStderrT { runRedirectStderrT :: m a }
+
+instance Console m => Console (RedirectStderrT m) where
+    writeStdout s = RedirectStderrT $ writeStderr s
+    writeStderr s = RedirectStderrT $ writeStderr s
+    readLineStdin = RedirectStderrT readLineStdin
+```
+
+`prog :: ∀m. Console m => m A` に対して`runRedirectStderrT`を適用することでモナド変換子を一段積み、標準出力が標準エラーに流れるようにできます。
+
+この方法でも、プログラム本体 `prog` は変更せずに意味だけを書き換えられています。ただし、ここでの違いは「どのキャリアを使うか」をコンパイル時に決めてしまっている点にあります。`RedirectStderrT (LoggingT IO)` のように複数のモナド変換子を積み上げることはできますが、その積み方は型として静的に固定されます。
+
+この制約は、先ほどの「適応回数`n`を実行時に決めるフック」において明らかになります。自由モナドの場合は
+
+```hs
+emphasizeN :: Int -> Freer Console' a -> Freer Console' a
+emphasizeN n = ...
+```
+
+のように、実行時に渡された`n`に応じてフックの適用回数を変えることができました。一方、Tagless finalでは
+
+```hs
+newtype EmphasizeT m a = EmphasizeT { runEmphasizeT :: m a }
+
+instance Console m => Console (EmphasizeT m) where
+    writeStdout s = EmphasizeT $ writeStdout (s ++ "!")
+    writeStderr s = EmphasizeT $ writeStderr s
+    readLineStdin = EmphasizeT readLineStdin
+```
+
+のような変換子で表されるフックが用意されていたとき、それを動的な回数`n`だけ繰り返すにはどうすればよいでしょうか？
+これをやろうとすると、型としては
+
+```hs
+EmphasizeT (EmphasizeT ( ... (EmphasizeT m) ... ))
+```
+
+という形で`n`回繰り返す必要が出てきます。ところが、`n`は実行時に決まる値なので、その回数分だけ`EmphasizeT`を積むというのは静的に型が付かないことを意味します。
+
+もちろん、`ReaderT Int`を使うなどすることで動的な回数`!`を出力させるようなフックは問題なく書けますが、あくまでそのような変換子を自分で実装する必要があります。
+既に用意されている一般のフック処理について、それを`n`回適用する方法はTagless finalでは明らかではありません。
+
+つまり、Tagless finalでは型クラスを使う都合上、必然的に
+
+* `m`はコンパイル時に「どのキャリアを使うか」が決まる静的な型であり
+* その上に積む変換子の構造も静的に決まっている
+
+という設計に誘導されるため、**実行時に決まる条件に応じてエフェクトの解釈そのものを差し替えるようなことは自由モナドほど自由にはやりづらい**という違いが出てきます。
+
+## 両者のスタイルの違いとトレードオフ
+
+まとめると、次のような違いが見えます。
+
+* Freerでは、エフェクトをGADTとして表現することで第一級データとして操作しやすくし、さらに
+  `Freer f a = Freer (∀m. Monad m => (∀x. f x -> m x) -> m a)`
+  の形で`∀m`の量化を`newtype`の内側に閉じ込めているため、解釈を与えるタイミングを実行時まで遅延させやすい。
+  その結果として、`rewrite`のような後からのプログラム書き換え、実行時の値に依存する動的なフック挿入が書きやすい。
+
+* Tagless finalでは`m`をエフェクト付き計算のキャリアとしてあらかじめ静的に決めてしまうスタイルに誘導される。
+    その代わり、コンパイラは具体的なキャリア型を見ながら最適化がしやすく、データ構造も静的に決まるため、動的ディスパッチのオーバーヘッドがなく高速に動作する傾向にある。
+
+**型のレベルでは両者は同型ですが、「どちら側で何をやると楽か」という実用上の視点では結構違いがあると言えそうです。**
+`Console'`のようにGADTとしてエフェクトをデータ化しておくと、後からの書き換えや変換がやりやすいので`rewrite`的なスタイルが発達し、Tagless finalのように型クラスでエフェクトを捉えると、専用キャリアを設計してコンパイル時に決め打つスタイルが発達する、という形で設計が分かれていくのだと理解することができます。
+
+いずれにせよ、後半で述べた性質の違いはかなり微妙なものだと思います。
+原理的に機能に違いがあるわけではなく、あくまで実際にプログラミングで使おうとしたときの簡単さの違いであって、これは言語機能のサポートがどの程度あるかといった外部的・環境的な側面が大きいと言えるでしょう。
