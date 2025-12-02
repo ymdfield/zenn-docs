@@ -214,13 +214,13 @@ Tagless finalでも基本的に同様のことができますが、そのやり�
 自由モナドの方法で書かれたプログラム変換関数
 
 ```hs
-hook' :: Freer f a -> Freer g a
+hook' :: Freer C' a -> Freer D' a
 ```
 
 があるとき、理論的には、Tagless finalにおいてこれに対応するのは以下のような関数です。
 
 ```
-hook :: (∀m. C m => m a) -> (∀m. C m => m a)
+hook :: (∀m. C m => m a) -> (∀m. D m => m a)
 ```
 
 しかしながらTagless finalの通常のスタイルでは、プログラム変換（フック）を行う関数をこのような型にすることはありません。なぜでしょうか？
