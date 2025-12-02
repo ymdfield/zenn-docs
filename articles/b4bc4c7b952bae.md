@@ -377,7 +377,9 @@ multiCountStderrT pathAndRules prog = ???
 もしコンパイル時に決まる長さであれば、例えば2回であれば型は`CountStderrT (CountStderrT m)`、3回であれば`CountStderrT (CountStderrT (CountStderrT m))`のようになるでしょう。
 しかし実行時に長さが与えられる一般のリストについて考えようとすると、長さ`n`に応じて
 
-`CountStderrT (CountStderrT ( ... (CountStderrT m) ... ))`
+```hs
+CountStderrT (CountStderrT ( ... (CountStderrT m) ... ))
+```
 
 のような型が必要になりますが、`n`は実行時にしかわからないので、静的に型が付かなくなってしまうのです。
 
