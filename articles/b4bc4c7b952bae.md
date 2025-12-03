@@ -315,7 +315,7 @@ countStderr path rule (Freer k) = Freer $ \handle -> do
             ReadLineStdin -> lift $ handle ReadLineStdin
 
     -- k を StateT Int m 上で解釈する
-    (result, n) <- runStateT (k countHandle) 0
+    (result, count) <- runStateT (k countHandle) 0
 
     -- 最後にカウントを出力する
     handle $ WriteStdout $ path ++ ": " ++ show count ++ " errors"
